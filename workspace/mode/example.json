@@ -1,0 +1,9 @@
+{
+  "name": "example",
+  "description": "Example mode configuration for nanobot",
+  "append": "## Custom Mode\n- Add your custom instructions here\n- Each rule on a new line",
+  "regex_rules": [
+    "concise->Provide detailed explanations with examples",
+    "short response->comprehensive response with step-by-step details"
+  ]
+}
