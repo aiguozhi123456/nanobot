@@ -33,11 +33,6 @@ class ModeLoader:
         """Apply mode configuration to system prompt."""
         result = system_prompt
 
-        append_content = mode_config.get("append", "")
-        if append_content:
-            append_content = append_content.replace("\\n", "\n")
-            result = f"{result}\n\n{append_content}"
-
         regex_rules = mode_config.get("regex_rules", [])
         for rule in regex_rules:
             if isinstance(rule, str) and "->" in rule:
@@ -46,6 +41,11 @@ class ModeLoader:
                     result = re.sub(pattern, replacement, result)
                 except re.error:
                     pass
+
+        append_content = mode_config.get("append", "")
+        if append_content:
+            append_content = append_content.replace("\\n", "\n")
+            result = f"{result}\n\n{append_content}"
 
         return result
 
