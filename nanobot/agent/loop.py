@@ -381,13 +381,8 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            mode_config=mode_config,
         )
-
-        # Apply mode to system prompt
-        if mode_config:
-            initial_messages[0]["content"] = self.mode_loader.apply_mode(
-                initial_messages[0]["content"], mode_config
-            )
 
         async def _bus_progress(content: str) -> None:
             await self.bus.publish_outbound(
