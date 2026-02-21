@@ -1,9 +1,12 @@
 {
   "name": "example",
-  "description": "Example mode configuration for nanobot",
-  "append": "## Custom Mode\n- Add your custom instructions here\n- Each rule on a new line",
+  "description": "Example mode configuration demonstrating regex and append usage",
+  "append": "## Custom Mode\n\n- Provide detailed explanations with multiple examples\n- Include step-by-step breakdowns\n- Show alternative approaches when applicable\n- Add code examples for technical topics",
   "regex_rules": [
     "concise->Provide detailed explanations with examples",
-    "short response->comprehensive response with step-by-step details"
+    "short response->comprehensive response with step-by-step details",
+    "Be concise->Provide thorough analysis with multiple viewpoints",
+    "quick answer->detailed and well-reasoned response",
+    "[Bb]e (concise|short)->Provide extensive analysis"
   ]
 }
