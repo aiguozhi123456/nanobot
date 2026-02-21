@@ -1,30 +1,35 @@
 """Agent loop: the core processing engine."""
 
-import asyncio
-from contextlib import AsyncExitStack
-import json
-import json_repair
-from pathlib import Path
-import re
-from typing import Any, Awaitable, Callable
+from __future__ import annotations
 
+import asyncio
+import json
+import re
+from contextlib import AsyncExitStack
+from pathlib import Path
+from typing import TYPE_CHECKING, Awaitable, Callable
+
+import json_repair
 from loguru import logger
 
+from nanobot.agent.context import ContextBuilder, parse_mode_command
+from nanobot.agent.memory import MemoryStore
+from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.spawn import SpawnTool
+from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.memory import MemoryStore
-from nanobot.agent.context import ContextBuilder, parse_mode_command
-from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import Session, SessionManager
+
+if TYPE_CHECKING:
+    from nanobot.config.schema import ExecToolConfig
+    from nanobot.cron.service import CronService
 
 
 class AgentLoop:
@@ -50,14 +55,13 @@ class AgentLoop:
         max_tokens: int = 4096,
         memory_window: int = 50,
         brave_api_key: str | None = None,
-        exec_config: "ExecToolConfig | None" = None,
-        cron_service: "CronService | None" = None,
+        exec_config: ExecToolConfig | None = None,
+        cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
-        from nanobot.cron.service import CronService
 
         self.bus = bus
         self.provider = provider
@@ -91,6 +95,7 @@ class AgentLoop:
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
+        self._mcp_connecting = False
         self._consolidating: set[str] = set()  # Session keys with consolidation in progress
         self._register_default_tools()
 
@@ -130,14 +135,26 @@ class AgentLoop:
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
-        if self._mcp_connected or not self._mcp_servers:
+        if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
             return
-        self._mcp_connected = True
+        self._mcp_connecting = True
         from nanobot.agent.tools.mcp import connect_mcp_servers
 
-        self._mcp_stack = AsyncExitStack()
-        await self._mcp_stack.__aenter__()
-        await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
+        try:
+            self._mcp_stack = AsyncExitStack()
+            await self._mcp_stack.__aenter__()
+            await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
+            self._mcp_connected = True
+        except Exception as e:
+            logger.error("Failed to connect MCP servers (will retry next message): {}", e)
+            if self._mcp_stack:
+                try:
+                    await self._mcp_stack.aclose()
+                except Exception:
+                    pass
+                self._mcp_stack = None
+        finally:
+            self._mcp_connecting = False
 
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
@@ -207,7 +224,9 @@ class AgentLoop:
             if response.has_tool_calls:
                 if on_progress:
                     clean = self._strip_think(response.content)
-                    await on_progress(clean or self._tool_hint(response.tool_calls))
+                    if clean:
+                        await on_progress(clean)
+                    await on_progress(self._tool_hint(response.tool_calls))
 
                 tool_call_dicts = [
                     {
@@ -245,11 +264,6 @@ class AgentLoop:
                         "Interim text response (no tools used yet), retrying: {}",
                         final_content[:80],
                     )
-                    messages = self.context.add_assistant_message(
-                        messages,
-                        response.content,
-                        reasoning_content=response.reasoning_content,
-                    )
                     final_content = None
                     continue
                 break
@@ -267,8 +281,14 @@ class AgentLoop:
                 msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
                 try:
                     response = await self._process_message(msg)
-                    if response:
-                        await self.bus.publish_outbound(response)
+                    await self.bus.publish_outbound(
+                        response
+                        or OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content="",
+                        )
+                    )
                 except Exception as e:
                     logger.error("Error processing message: {}", e)
                     await self.bus.publish_outbound(
@@ -374,6 +394,10 @@ class AgentLoop:
                 )
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        if message_tool := self.tools.get("message"):
+            if isinstance(message_tool, MessageTool):
+                message_tool.start_turn()
+
         initial_messages = self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
             current_message=cleaned_content if mode_name else msg.content,
@@ -384,12 +408,14 @@ class AgentLoop:
         )
 
         async def _bus_progress(content: str) -> None:
+            meta = dict(msg.metadata or {})
+            meta["_progress"] = True
             await self.bus.publish_outbound(
                 OutboundMessage(
                     channel=msg.channel,
                     chat_id=msg.chat_id,
                     content=content,
-                    metadata=msg.metadata or {},
+                    metadata=meta,
                 )
             )
 
@@ -412,6 +438,10 @@ class AgentLoop:
             "assistant", final_content, tools_used=tools_used if tools_used else None
         )
         self.sessions.save(session)
+
+        if message_tool := self.tools.get("message"):
+            if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
+                return None
 
         return OutboundMessage(
             channel=msg.channel,
