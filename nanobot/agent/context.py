@@ -1,13 +1,25 @@
 """Context builder for assembling agent prompts."""
 
 import base64
+import json
 import mimetypes
 import platform
+import re
 from pathlib import Path
 from typing import Any
 
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
+
+
+def parse_mode_command(message: str) -> tuple[str | None, str]:
+    """Parse mode command from message. Returns: (mode_name, remaining_message)."""
+    match = re.match(r"^\s*mode:\s*:\s*(\S+)\s*\n?", message)
+    if match:
+        mode_name = match.group(1)
+        remaining = message[match.end() :].lstrip("\n")
+        return mode_name, remaining
+    return None, message
 
 
 class ContextBuilder:
@@ -22,8 +34,25 @@ class ContextBuilder:
 
     def __init__(self, workspace: Path):
         self.workspace = workspace
+        self.mode_dir = workspace / "mode"
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+
+    def get_available_modes(self) -> list[str]:
+        """Get list of available mode names."""
+        if not self.mode_dir.exists():
+            return []
+        return [f.stem for f in self.mode_dir.glob("*.json")]
+
+    def load_mode(self, name: str) -> dict[str, Any] | None:
+        """Load a specific mode configuration."""
+        mode_file = self.mode_dir / f"{name}.json"
+        if not mode_file.exists():
+            return None
+        try:
+            return json.loads(mode_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, Exception):
+            return None
 
     def build_system_prompt(
         self, skill_names: list[str] | None = None, mode_config: dict[str, Any] | None = None

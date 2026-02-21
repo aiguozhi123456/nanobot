@@ -22,7 +22,7 @@ from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.memory import MemoryStore
-from nanobot.agent.modes import ModeLoader, parse_mode_command
+from nanobot.agent.context import ContextBuilder, parse_mode_command
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import Session, SessionManager
 
@@ -74,7 +74,6 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
-        self.mode_loader = ModeLoader(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
             provider=provider,
@@ -365,9 +364,9 @@ class AgentLoop:
         mode_name, cleaned_content = parse_mode_command(msg.content)
         mode_config = None
         if mode_name:
-            mode_config = self.mode_loader.load_mode(mode_name)
+            mode_config = self.context.load_mode(mode_name)
             if not mode_config:
-                available = self.mode_loader.get_available_modes()
+                available = self.context.get_available_modes()
                 return OutboundMessage(
                     channel=msg.channel,
                     chat_id=msg.chat_id,
