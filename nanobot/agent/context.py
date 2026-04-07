@@ -25,9 +25,7 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
 
-    def build_system_prompt(
-        self, skill_names: list[str] | None = None, current_message: str = ""
-    ) -> str:
+    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
 
@@ -38,9 +36,6 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
-
-        if current_message and (keyword_mem := self._get_keyword_memory(current_message)):
-            parts.append(f"## Keyword Memories\n\n{keyword_mem}")
 
         always_skills = self.skills.get_always_skills()
         if always_skills:
@@ -145,9 +140,11 @@ class ContextBuilder:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
 
         messages = [
-            {"role": "system", "content": self.build_system_prompt(skill_names, current_message)},
+            {"role": "system", "content": self.build_system_prompt(skill_names)},
             *history,
         ]
+        if current_message and (keyword_mem := self._get_keyword_memory(current_message)):
+            messages.append({"role": "system", "content": f"## Keyword Memories\n\n{keyword_mem}"})
         if messages[-1].get("role") == current_role:
             last = dict(messages[-1])
             last["content"] = self._merge_message_content(last.get("content"), merged)

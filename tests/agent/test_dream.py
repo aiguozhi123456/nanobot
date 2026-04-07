@@ -1,8 +1,9 @@
 """Tests for the Dream class — two-phase memory consolidation via AgentRunner."""
 
-import pytest
-
+import json
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from nanobot.agent.memory import Dream, MemoryStore
 from nanobot.agent.runner import AgentRunResult
@@ -60,13 +61,17 @@ class TestDreamRun:
         mock_provider.chat_with_retry.assert_not_called()
         mock_runner.run.assert_not_called()
 
-    async def test_calls_runner_for_unprocessed_entries(self, dream, mock_provider, mock_runner, store):
+    async def test_calls_runner_for_unprocessed_entries(
+        self, dream, mock_provider, mock_runner, store
+    ):
         """Dream should call AgentRunner when there are unprocessed history entries."""
         store.append_history("User prefers dark mode")
         mock_provider.chat_with_retry.return_value = MagicMock(content="New fact")
-        mock_runner.run = AsyncMock(return_value=_make_run_result(
-            tool_events=[{"name": "edit_file", "status": "ok", "detail": "memory/MEMORY.md"}],
-        ))
+        mock_runner.run = AsyncMock(
+            return_value=_make_run_result(
+                tool_events=[{"name": "edit_file", "status": "ok", "detail": "memory/MEMORY.md"}],
+            )
+        )
         result = await dream.run()
         assert result is True
         mock_runner.run.assert_called_once()
@@ -95,3 +100,76 @@ class TestDreamRun:
         entries = store.read_unprocessed_history(since_cursor=0)
         assert all(e["cursor"] > 0 for e in entries)
 
+
+class TestDreamKeywordMemory:
+    async def test_phase1_receives_keyword_summary(self, dream, mock_provider, mock_runner, store):
+        mock_provider.chat_with_retry.return_value = MagicMock(content="[SKIP]")
+        mock_runner.run = AsyncMock(return_value=_make_run_result())
+        (store.memory_dir / "keyword_memory.json").write_text(
+            json.dumps([{"keywords": ["deploy"], "prompt": "Test policy."}])
+        )
+        store.append_history("User deploys to production")
+        await dream.run()
+        call_args = mock_provider.chat_with_retry.call_args
+        user_msg = call_args.kwargs["messages"][1]["content"]
+        assert "keyword_memory.json" in user_msg
+        assert "1 rule(s)" in user_msg
+        assert "deploy" in user_msg
+
+    async def test_phase2_loads_relevant_keyword_entries(
+        self, dream, mock_provider, mock_runner, store
+    ):
+        (store.memory_dir / "keyword_memory.json").write_text(
+            json.dumps(
+                [
+                    {"keywords": ["deploy"], "prompt": "Blue-green only."},
+                    {"keywords": ["database"], "prompt": "Always backup."},
+                ]
+            )
+        )
+        store.append_history("User wants canary deployment")
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content="[KEYWORD] deploy rule outdated — user prefers canary"
+        )
+        mock_runner.run = AsyncMock(return_value=_make_run_result())
+        await dream.run()
+        call_args = mock_runner.run.call_args[0][0]
+        user_msg = call_args.initial_messages[1]["content"]
+        assert "deploy" in user_msg
+        assert "Blue-green" in user_msg
+
+    async def test_phase2_skips_keyword_when_no_findings(
+        self, dream, mock_provider, mock_runner, store
+    ):
+        (store.memory_dir / "keyword_memory.json").write_text(
+            json.dumps([{"keywords": ["deploy"], "prompt": "Test policy."}])
+        )
+        store.append_history("User likes cats")
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content="[USER] has a cat named Luna"
+        )
+        mock_runner.run = AsyncMock(return_value=_make_run_result())
+        await dream.run()
+        call_args = mock_runner.run.call_args[0][0]
+        user_msg = call_args.initial_messages[1]["content"]
+        assert "Relevant keyword" not in user_msg
+
+    async def test_phase2_includes_tail_for_new_entries(
+        self, dream, mock_provider, mock_runner, store
+    ):
+        (store.memory_dir / "keyword_memory.json").write_text(
+            json.dumps([{"keywords": ["deploy"], "prompt": "Use canary."}])
+        )
+        store.append_history("User needs docker rule")
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content="[KEYWORD] suggest new rule for docker/registry"
+        )
+        mock_runner.run = AsyncMock(return_value=_make_run_result())
+        await dream.run()
+        call_args = mock_runner.run.call_args[0][0]
+        user_msg = call_args.initial_messages[1]["content"]
+        assert "tail" in user_msg.lower()
+
+    def test_git_tracks_keyword_memory(self, tmp_path):
+        store = MemoryStore(tmp_path)
+        assert "memory/keyword_memory.json" in store.git._tracked_files
