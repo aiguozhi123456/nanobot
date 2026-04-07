@@ -20,11 +20,15 @@ def _make_workspace(tmp_path: Path, keyword_data: list[dict] | None = None) -> P
     return workspace
 
 
-def _get_keyword_msg(messages: list[dict]) -> dict | None:
-    for msg in messages:
-        if msg["role"] == "system" and "## Keyword Memories" in msg.get("content", ""):
-            return msg
-    return None
+def _get_user_content(messages: list[dict]) -> str:
+    for msg in reversed(messages):
+        if msg["role"] == "user":
+            c = msg["content"]
+            if isinstance(c, str):
+                return c
+            if isinstance(c, list):
+                return " ".join(b.get("text", "") for b in c if isinstance(b, dict))
+    return ""
 
 
 def test_keyword_memory_injected_when_keyword_matches(tmp_path):
@@ -38,10 +42,10 @@ def test_keyword_memory_injected_when_keyword_matches(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="请帮我deploy到生产环境", channel="cli", chat_id="direct"
     )
-    kw_msg = _get_keyword_msg(messages)
-    assert kw_msg is not None
-    assert "blue-green deployment" in kw_msg["content"]
-    assert "backup before schema" not in kw_msg["content"]
+    user_content = _get_user_content(messages)
+    assert "[Keyword Context]" in user_content
+    assert "blue-green deployment" in user_content
+    assert "backup before schema" not in user_content
 
 
 def test_keyword_memory_injected_multiple_matches(tmp_path):
@@ -55,10 +59,10 @@ def test_keyword_memory_injected_multiple_matches(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="deploy the database changes", channel="cli", chat_id="direct"
     )
-    kw_msg = _get_keyword_msg(messages)
-    assert kw_msg is not None
-    assert "blue-green" in kw_msg["content"]
-    assert "Backup before" in kw_msg["content"]
+    user_content = _get_user_content(messages)
+    assert "[Keyword Context]" in user_content
+    assert "blue-green" in user_content
+    assert "Backup before" in user_content
 
 
 def test_keyword_memory_not_injected_when_no_match(tmp_path):
@@ -71,7 +75,7 @@ def test_keyword_memory_not_injected_when_no_match(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="今天天气怎么样", channel="cli", chat_id="direct"
     )
-    assert _get_keyword_msg(messages) is None
+    assert "[Keyword Context]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_not_injected_when_no_message(tmp_path):
@@ -82,7 +86,7 @@ def test_keyword_memory_not_injected_when_no_message(tmp_path):
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "## Keyword Memories" not in prompt
+    assert "[Keyword Context]" not in prompt
 
 
 def test_keyword_memory_graceful_when_file_missing(tmp_path):
@@ -92,7 +96,7 @@ def test_keyword_memory_graceful_when_file_missing(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="deploy something", channel="cli", chat_id="direct"
     )
-    assert _get_keyword_msg(messages) is None
+    assert "[Keyword Context]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_graceful_when_invalid_json(tmp_path):
@@ -105,7 +109,7 @@ def test_keyword_memory_graceful_when_invalid_json(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="deploy something", channel="cli", chat_id="direct"
     )
-    assert _get_keyword_msg(messages) is None
+    assert "[Keyword Context]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_case_insensitive(tmp_path):
@@ -118,9 +122,9 @@ def test_keyword_memory_case_insensitive(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="DEPLOY now", channel="cli", chat_id="direct"
     )
-    kw_msg = _get_keyword_msg(messages)
-    assert kw_msg is not None
-    assert "blue-green" in kw_msg["content"]
+    user_content = _get_user_content(messages)
+    assert "[Keyword Context]" in user_content
+    assert "blue-green" in user_content
 
 
 def test_keyword_memory_substring_match(tmp_path):
@@ -133,12 +137,12 @@ def test_keyword_memory_substring_match(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="redeploying the service", channel="cli", chat_id="direct"
     )
-    kw_msg = _get_keyword_msg(messages)
-    assert kw_msg is not None
-    assert "blue-green" in kw_msg["content"]
+    user_content = _get_user_content(messages)
+    assert "[Keyword Context]" in user_content
+    assert "blue-green" in user_content
 
 
-def test_keyword_memory_placed_after_history_before_user_message(tmp_path):
+def test_keyword_memory_injected_into_user_message_not_system(tmp_path):
     data = [
         {"keywords": ["deploy"], "prompt": "Use blue-green deployment."},
     ]
@@ -146,23 +150,15 @@ def test_keyword_memory_placed_after_history_before_user_message(tmp_path):
     builder = ContextBuilder(workspace)
 
     messages = builder.build_messages(
-        history=[{"role": "user", "content": "hello"}],
-        current_message="deploy to production",
-        channel="cli",
-        chat_id="direct",
+        history=[], current_message="deploy to production", channel="cli", chat_id="direct"
     )
 
-    kw_idx = next(
-        i for i, m in enumerate(messages) if "## Keyword Memories" in m.get("content", "")
-    )
-    user_idx = next(
-        i
-        for i, m in enumerate(messages)
-        if m["role"] == "user" and "deploy" in m.get("content", "")
-    )
+    assert messages[0]["role"] == "system"
+    assert "[Keyword Context]" not in messages[0]["content"]
 
-    assert kw_idx > 0, "keyword injection should come after system prompt"
-    assert kw_idx < user_idx, "keyword injection should come before current user message"
+    user_msgs = [m for m in messages if m["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert "[Keyword Context]" in _get_user_content(messages)
 
 
 def test_keyword_memory_does_not_change_system_prompt(tmp_path):
@@ -182,6 +178,24 @@ def test_keyword_memory_does_not_change_system_prompt(tmp_path):
     assert prompt_no_keyword == prompt_with_keyword
 
 
+def test_keyword_memory_no_extra_messages(tmp_path):
+    data = [
+        {"keywords": ["deploy"], "prompt": "Use blue-green deployment."},
+    ]
+    workspace = _make_workspace(tmp_path, data)
+    builder = ContextBuilder(workspace)
+
+    messages = builder.build_messages(
+        history=[], current_message="deploy now", channel="cli", chat_id="direct"
+    )
+
+    system_msgs = [m for m in messages if m["role"] == "system"]
+    assert len(system_msgs) == 1, "should have exactly one system message"
+
+    user_msgs = [m for m in messages if m["role"] == "user"]
+    assert len(user_msgs) == 1, "keyword context should be in user message, not a separate message"
+
+
 def test_keyword_memory_empty_keywords_list(tmp_path):
     data = [
         {"keywords": [], "prompt": "Should not match."},
@@ -192,7 +206,7 @@ def test_keyword_memory_empty_keywords_list(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="anything", channel="cli", chat_id="direct"
     )
-    assert _get_keyword_msg(messages) is None
+    assert "[Keyword Context]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_entry_without_prompt(tmp_path):
@@ -205,7 +219,7 @@ def test_keyword_memory_entry_without_prompt(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="deploy now", channel="cli", chat_id="direct"
     )
-    assert _get_keyword_msg(messages) is None
+    assert "[Keyword Context]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_chinese_keyword_match(tmp_path):
@@ -218,6 +232,6 @@ def test_keyword_memory_chinese_keyword_match(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="请修改数据库表结构", channel="cli", chat_id="direct"
     )
-    kw_msg = _get_keyword_msg(messages)
-    assert kw_msg is not None
-    assert "backup before schema" in kw_msg["content"]
+    user_content = _get_user_content(messages)
+    assert "[Keyword Context]" in user_content
+    assert "backup before schema" in user_content

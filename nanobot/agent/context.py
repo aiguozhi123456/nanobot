@@ -132,19 +132,20 @@ class ContextBuilder:
         runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone)
         user_content = self._build_user_content(current_message, media)
 
-        # Merge runtime context and user content into a single user message
-        # to avoid consecutive same-role messages that some providers reject.
+        keyword_prefix = ""
+        if current_message and (keyword_mem := self._get_keyword_memory(current_message)):
+            keyword_prefix = f"[Keyword Context]\n{keyword_mem}\n\n"
+
         if isinstance(user_content, str):
-            merged = f"{runtime_ctx}\n\n{user_content}"
+            merged = f"{runtime_ctx}\n\n{keyword_prefix}{user_content}"
         else:
-            merged = [{"type": "text", "text": runtime_ctx}] + user_content
+            prefix_text = f"{runtime_ctx}\n\n{keyword_prefix}"
+            merged = [{"type": "text", "text": prefix_text}] + user_content
 
         messages = [
             {"role": "system", "content": self.build_system_prompt(skill_names)},
             *history,
         ]
-        if current_message and (keyword_mem := self._get_keyword_memory(current_message)):
-            messages.append({"role": "system", "content": f"## Keyword Memories\n\n{keyword_mem}"})
         if messages[-1].get("role") == current_role:
             last = dict(messages[-1])
             last["content"] = self._merge_message_content(last.get("content"), merged)
