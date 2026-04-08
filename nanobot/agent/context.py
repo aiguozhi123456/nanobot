@@ -133,7 +133,7 @@ class ContextBuilder:
         user_content = self._build_user_content(current_message, media)
 
         if current_message and (keyword_mem := self._get_keyword_memory(current_message)):
-            runtime_ctx += f"\nKeyword Memories:\n{keyword_mem}"
+            runtime_ctx += f"\n[Keyword Memories]\n{keyword_mem}"
 
         if isinstance(user_content, str):
             merged = f"{runtime_ctx}\n\n{user_content}"

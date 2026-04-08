@@ -43,7 +43,7 @@ def test_keyword_memory_injected_when_keyword_matches(tmp_path):
         history=[], current_message="请帮我deploy到生产环境", channel="cli", chat_id="direct"
     )
     user_content = _get_user_content(messages)
-    assert "Keyword Memories:" in user_content
+    assert "[Keyword Memories]" in user_content
     assert "blue-green deployment" in user_content
     assert "backup before schema" not in user_content
 
@@ -60,7 +60,7 @@ def test_keyword_memory_injected_multiple_matches(tmp_path):
         history=[], current_message="deploy the database changes", channel="cli", chat_id="direct"
     )
     user_content = _get_user_content(messages)
-    assert "Keyword Memories:" in user_content
+    assert "[Keyword Memories]" in user_content
     assert "blue-green" in user_content
     assert "Backup before" in user_content
 
@@ -75,7 +75,7 @@ def test_keyword_memory_not_injected_when_no_match(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="今天天气怎么样", channel="cli", chat_id="direct"
     )
-    assert "Keyword Memories:" not in _get_user_content(messages)
+    assert "[Keyword Memories]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_not_injected_when_no_message(tmp_path):
@@ -86,7 +86,7 @@ def test_keyword_memory_not_injected_when_no_message(tmp_path):
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "Keyword Memories:" not in prompt
+    assert "[Keyword Memories]" not in prompt
 
 
 def test_keyword_memory_graceful_when_file_missing(tmp_path):
@@ -96,7 +96,7 @@ def test_keyword_memory_graceful_when_file_missing(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="deploy something", channel="cli", chat_id="direct"
     )
-    assert "Keyword Memories:" not in _get_user_content(messages)
+    assert "[Keyword Memories]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_graceful_when_invalid_json(tmp_path):
@@ -109,7 +109,7 @@ def test_keyword_memory_graceful_when_invalid_json(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="deploy something", channel="cli", chat_id="direct"
     )
-    assert "Keyword Memories:" not in _get_user_content(messages)
+    assert "[Keyword Memories]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_case_insensitive(tmp_path):
@@ -123,7 +123,7 @@ def test_keyword_memory_case_insensitive(tmp_path):
         history=[], current_message="DEPLOY now", channel="cli", chat_id="direct"
     )
     user_content = _get_user_content(messages)
-    assert "Keyword Memories:" in user_content
+    assert "[Keyword Memories]" in user_content
     assert "blue-green" in user_content
 
 
@@ -138,7 +138,7 @@ def test_keyword_memory_substring_match(tmp_path):
         history=[], current_message="redeploying the service", channel="cli", chat_id="direct"
     )
     user_content = _get_user_content(messages)
-    assert "Keyword Memories:" in user_content
+    assert "[Keyword Memories]" in user_content
     assert "blue-green" in user_content
 
 
@@ -154,11 +154,11 @@ def test_keyword_memory_inside_runtime_context_block(tmp_path):
     )
 
     assert messages[0]["role"] == "system"
-    assert "Keyword Memories:" not in messages[0]["content"]
+    assert "[Keyword Memories]" not in messages[0]["content"]
 
     user_content = _get_user_content(messages)
     assert user_content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG)
-    assert "Keyword Memories:" in user_content
+    assert "[Keyword Memories]" in user_content
 
 
 def test_keyword_memory_does_not_change_system_prompt(tmp_path):
@@ -206,7 +206,7 @@ def test_keyword_memory_empty_keywords_list(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="anything", channel="cli", chat_id="direct"
     )
-    assert "Keyword Memories:" not in _get_user_content(messages)
+    assert "[Keyword Memories]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_entry_without_prompt(tmp_path):
@@ -219,7 +219,7 @@ def test_keyword_memory_entry_without_prompt(tmp_path):
     messages = builder.build_messages(
         history=[], current_message="deploy now", channel="cli", chat_id="direct"
     )
-    assert "Keyword Memories:" not in _get_user_content(messages)
+    assert "[Keyword Memories]" not in _get_user_content(messages)
 
 
 def test_keyword_memory_chinese_keyword_match(tmp_path):
@@ -233,7 +233,7 @@ def test_keyword_memory_chinese_keyword_match(tmp_path):
         history=[], current_message="请修改数据库表结构", channel="cli", chat_id="direct"
     )
     user_content = _get_user_content(messages)
-    assert "Keyword Memories:" in user_content
+    assert "[Keyword Memories]" in user_content
     assert "backup before schema" in user_content
 
 
@@ -253,5 +253,5 @@ def test_keyword_memory_stripped_by_runtime_context_logic(tmp_path):
     parts = user_content.split("\n\n", 1)
     assert len(parts) > 1
     stripped = parts[1].strip()
-    assert "Keyword Memories:" not in stripped
+    assert "[Keyword Memories]" not in stripped
     assert "deploy now" in stripped
