@@ -58,3 +58,4 @@ class ToolContext:
     timezone: str = "UTC"
     workspace_sandbox: Any | None = None
     runtime_events: Any | None = None
+    spawn_presets: dict[str, Any] | None = None
